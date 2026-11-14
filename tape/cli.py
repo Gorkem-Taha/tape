@@ -167,7 +167,12 @@ def cmd_digest(args, settings, conn) -> int:
     """
     now = datetime.now(UTC)
     rows = db.digest_since(conn, (now - timedelta(hours=args.hours)).isoformat())
-    text = format_digest(rows, None if args.hours == DIGEST_LOOKBACK_HOURS else args.hours)
+    if args.json:
+        # For the agent, which formats and sends the digest itself and then needs the accession
+        # numbers of exactly what it sent to mark them.
+        text = json.dumps([dict(r) for r in rows], indent=2)
+    else:
+        text = format_digest(rows, None if args.hours == DIGEST_LOOKBACK_HOURS else args.hours)
     # Print first so the digest reaches the job log even when delivery fails.
     print(text)
     if args.send:
@@ -327,8 +332,11 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--hours", type=_positive_int, default=DIGEST_LOOKBACK_HOURS,
                    help="only filings accepted in the last N hours (default %(default)s, so filings routed "
                         "late on a Friday or before a holiday still make the next digest)")
-    d.add_argument("--send", action="store_true",
-                   help="also send via Telegram Bot API, and mark the filings reported if it goes out")
+    out = d.add_mutually_exclusive_group()
+    out.add_argument("--send", action="store_true",
+                     help="also send via Telegram Bot API, and mark the filings reported if it goes out")
+    out.add_argument("--json", action="store_true",
+                     help="print the digest's filings as JSON, in digest order, instead of the text")
     d.add_argument("--mark", action="store_true",
                    help="mark the printed filings reported, for when the agent sends the digest itself")
     d.set_defaults(fn=cmd_digest)

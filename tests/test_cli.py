@@ -1013,3 +1013,48 @@ def test_digest_send_logs_a_partial_send(tmp_path, monkeypatch, caplog):
     assert token not in caplog.text
     # Which filings went out isn't known, so none is marked and the next digest lists them all again.
     assert all(v is None for v in _digested(path).values())
+
+
+def _route(path, n, materiality, route="digest", hours_ago=1, event="guidance"):
+    with closing(db.connect(path)) as conn:
+        f = make_filing(n, accepted_at=(datetime.now(UTC) - timedelta(hours=hours_ago)).isoformat())
+        db.upsert_filing(conn, f)
+        db.upsert_score(conn, make_score(f.accession_no, materiality, event=event))
+        db.set_route(conn, f.accession_no, route)
+        conn.commit()
+    return f.accession_no
+
+
+def test_digest_json_lists_the_text_digests_filings_in_the_same_order(tmp_path, monkeypatch, capsys):
+    path = tmp_path / "t.db"
+    monkeypatch.setenv("TAPE_DB_PATH", str(path))
+    low = _route(path, 1, 3.1)
+    high = _route(path, 2, 4.2, route="now", event="mna")
+    tie_older = _route(path, 3, 3.1, hours_ago=5)
+    _route(path, 4, 1.0, route="log")
+
+    assert main(["digest", "--json"]) == 0
+    rows = json.loads(capsys.readouterr().out)
+    assert [r["accession_no"] for r in rows] == [high, low, tie_older]
+    assert rows[0]["materiality"] == 4.2 and rows[0]["event"] == "mna"
+    assert {"ticker", "company", "url", "direction"} <= rows[0].keys()
+
+    assert main(["digest"]) == 0
+    lines = capsys.readouterr().out.splitlines()[1:]
+    assert [line.split()[-1] for line in lines] == [r["url"] for r in rows]
+
+
+def test_digest_json_prints_an_empty_list_and_marks_nothing(tmp_path, monkeypatch, capsys):
+    path = tmp_path / "t.db"
+    monkeypatch.setenv("TAPE_DB_PATH", str(path))
+    acc = _route(path, 1, 3.1)
+    with closing(db.connect(path)) as conn, db.transaction(conn):
+        db.mark_digested(conn, [acc], "2026-01-01T00:00:00Z")
+
+    assert main(["digest", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == []
+
+
+def test_digest_json_cannot_be_sent(capsys):
+    with pytest.raises(SystemExit):
+        main(["digest", "--json", "--send"])
