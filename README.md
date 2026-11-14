@@ -27,6 +27,8 @@ tape run                 # one pass: ingest new 8-Ks, score, route
 tape pending             # filings from the last 24h waiting for a brief (what the agent reads)
 tape brief ACC --text .. # save a brief the agent wrote
 tape digest [--send]     # material filings no digest has reported yet (optionally to Telegram)
+tape digest --json       # the same filings as JSON, for the agent to send itself
+tape digest --mark ACC.. # mark the filings the agent sent as reported
 tape stats [--days 7]    # filings, scores, routes and Jev spend per day, plus EDGAR blocks, feed gaps and missing daily indexes
 tape retry               # filings Tape gave up scoring or fetching; --score/--fetch clear them for the next pass
 tape backfill --days 90  # score past filings for the evaluation

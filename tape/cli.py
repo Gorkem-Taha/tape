@@ -163,11 +163,26 @@ def format_digest(rows, hours: int | None = None) -> str:
 
 def cmd_digest(args, settings, conn) -> int:
     """Print the routed filings no digest has reported yet. They are marked as reported once
-    `--send` delivers the digest, or as soon as it is printed with `--mark` (the agent sends it itself).
+    `--send` delivers the digest, or as soon as it is printed with a bare `--mark`.
+
+    `--mark ACC [ACC ...]` prints nothing and marks exactly those filings: the agent sends the digest
+    itself and marks what it sent only once the send succeeded. Marking by accession number rather than
+    re-querying keeps a filing routed between the two calls from being marked without being sent.
     """
     now = datetime.now(UTC)
+    if args.mark:
+        if args.send or args.json:
+            print("error: --mark with accession numbers only marks; it can't be combined with --send or --json",
+                  file=sys.stderr)
+            return 2
+        return _mark_digested(conn, args.mark, now)
     rows = db.digest_since(conn, (now - timedelta(hours=args.hours)).isoformat())
-    text = format_digest(rows, None if args.hours == DIGEST_LOOKBACK_HOURS else args.hours)
+    if args.json:
+        # For the agent, which formats and sends the digest itself and then needs the accession
+        # numbers of exactly what it sent to mark them.
+        text = json.dumps([dict(r) for r in rows], indent=2)
+    else:
+        text = format_digest(rows, None if args.hours == DIGEST_LOOKBACK_HOURS else args.hours)
     # Print first so the digest reaches the job log even when delivery fails.
     print(text)
     if args.send:
@@ -194,10 +209,22 @@ def cmd_digest(args, settings, conn) -> int:
             # Left unmarked, so the next digest lists them again.
             log.error("digest not sent: Telegram request failed: %s", e)
             return 1
-    if args.send or args.mark:
+    if args.send or args.mark is not None:
         with db.transaction(conn):
             db.mark_digested(conn, (r["accession_no"] for r in rows), now.strftime("%Y-%m-%dT%H:%M:%SZ"))
     return 0
+
+
+def _mark_digested(conn, accessions: list[str], now: datetime) -> int:
+    accessions = list(dict.fromkeys(accessions))
+    with db.transaction(conn):
+        routed = db.digest_routed(conn, accessions)
+        db.mark_digested(conn, (a for a in accessions if a in routed), now.strftime("%Y-%m-%dT%H:%M:%SZ"))
+    unknown = [a for a in accessions if a not in routed]
+    for acc in unknown:
+        # The agent reads stderr: a mistyped accession number shouldn't pass as marked.
+        print(f"error: no filing {acc} routed now or digest; not marked", file=sys.stderr)
+    return 1 if unknown else 0
 
 
 def cmd_stats(args, settings, conn) -> int:
@@ -327,10 +354,14 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--hours", type=_positive_int, default=DIGEST_LOOKBACK_HOURS,
                    help="only filings accepted in the last N hours (default %(default)s, so filings routed "
                         "late on a Friday or before a holiday still make the next digest)")
-    d.add_argument("--send", action="store_true",
-                   help="also send via Telegram Bot API, and mark the filings reported if it goes out")
-    d.add_argument("--mark", action="store_true",
-                   help="mark the printed filings reported, for when the agent sends the digest itself")
+    out = d.add_mutually_exclusive_group()
+    out.add_argument("--send", action="store_true",
+                     help="also send via Telegram Bot API, and mark the filings reported if it goes out")
+    out.add_argument("--json", action="store_true",
+                     help="print the digest's filings as JSON, in digest order, instead of the text")
+    d.add_argument("--mark", nargs="*", metavar="ACC",
+                   help="with accession numbers: print nothing and mark just those filings reported, once "
+                        "the agent has sent them; bare: mark the printed filings reported")
     d.set_defaults(fn=cmd_digest)
     st = sub.add_parser("stats", help="filings, scores, routes and Jev spend per day")
     st.add_argument("--days", type=_positive_int, default=7)

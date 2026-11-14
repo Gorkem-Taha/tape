@@ -47,10 +47,17 @@ filings it routed `now`. Do not re-score or second-guess the routing.
 
 ## Evening digest
 
-At the 6:00 pm ET run, also run `tape digest --mark` and send its output as one Telegram message.
-`--mark` records the listed filings as reported so tomorrow's digest doesn't repeat them; run it
-only when you are about to send. If the send fails, paste the printed digest into the next message
-you can send, since those filings won't be listed again.
+At the 6:00 pm ET run, also send the evening digest:
+
+1. Run `tape digest --json`. It prints a JSON list of the filings to report, most material first.
+   If the list is empty, send one line: "Tape digest: nothing material today."
+2. Otherwise send them as one Telegram message: a header line "Tape digest: N filings worth a
+   look", then one line per filing in the order given: materiality to one decimal, ticker (or
+   company), event, direction in parentheses, and the `url`.
+3. Only after the message is sent, run `tape digest --mark <accession_no> ...` with the
+   accession numbers of the filings you sent, so tomorrow's digest doesn't repeat them. If the send
+   fails, don't mark anything: the next digest lists them again. If `--mark` exits 1, it names the
+   accession numbers it couldn't mark on lines starting `error:`; report those lines.
 
 ## Rules
 
