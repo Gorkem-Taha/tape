@@ -1058,3 +1058,62 @@ def test_digest_json_prints_an_empty_list_and_marks_nothing(tmp_path, monkeypatc
 def test_digest_json_cannot_be_sent(capsys):
     with pytest.raises(SystemExit):
         main(["digest", "--json", "--send"])
+
+
+def test_digest_mark_with_accessions_marks_only_those(tmp_path, monkeypatch, capsys):
+    path = tmp_path / "t.db"
+    monkeypatch.setenv("TAPE_DB_PATH", str(path))
+    sent = _route(path, 1, 3.4)
+    assert main(["digest", "--json"]) == 0
+    assert [r["accession_no"] for r in json.loads(capsys.readouterr().out)] == [sent]
+    # Routed by a 5-minute pass while the agent was sending: it wasn't in the digest it sent.
+    routed_meanwhile = _route(path, 2, 3.9)
+
+    assert main(["digest", "--mark", sent]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err == ""
+    digested = _digested(path)
+    assert digested[sent] is not None
+    assert digested[routed_meanwhile] is None
+
+    assert main(["digest", "--json"]) == 0
+    assert [r["accession_no"] for r in json.loads(capsys.readouterr().out)] == [routed_meanwhile]
+
+
+def test_digest_mark_reports_accessions_it_cannot_mark(tmp_path, monkeypatch, capsys):
+    path = tmp_path / "t.db"
+    monkeypatch.setenv("TAPE_DB_PATH", str(path))
+    good = _route(path, 1, 3.4)
+    logged = _route(path, 2, 1.0, route="log")
+
+    assert main(["digest", "--mark", good, "0000000001-26-999999", logged, good]) == 1
+    err = capsys.readouterr().err.splitlines()
+    assert err == [
+        "error: no filing 0000000001-26-999999 routed now or digest; not marked",
+        f"error: no filing {logged} routed now or digest; not marked",
+    ]
+    digested = _digested(path)
+    assert digested[good] is not None
+    assert digested[logged] is None
+
+
+def test_digest_mark_keeps_the_first_mark_time(tmp_path, monkeypatch, capsys):
+    path = tmp_path / "t.db"
+    monkeypatch.setenv("TAPE_DB_PATH", str(path))
+    acc = _route(path, 1, 3.4)
+    with closing(db.connect(path)) as conn, db.transaction(conn):
+        db.mark_digested(conn, [acc], "2026-01-01T00:00:00Z")
+
+    assert main(["digest", "--mark", acc]) == 0
+    assert _digested(path)[acc] == "2026-01-01T00:00:00Z"
+
+
+@pytest.mark.parametrize("flag", ["--send", "--json"])
+def test_digest_mark_with_accessions_refuses_send_and_json(tmp_path, monkeypatch, capsys, flag):
+    path = tmp_path / "t.db"
+    monkeypatch.setenv("TAPE_DB_PATH", str(path))
+    acc = _route(path, 1, 3.4)
+
+    assert main(["digest", flag, "--mark", acc]) == 2
+    assert "can't be combined" in capsys.readouterr().err
+    assert _digested(path)[acc] is None

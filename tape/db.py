@@ -544,6 +544,16 @@ def digest_since(conn: sqlite3.Connection, since_iso: str) -> list[sqlite3.Row]:
     ).fetchall()
 
 
+def digest_routed(conn: sqlite3.Connection, accessions: Iterable[str]) -> set[str]:
+    """Those of `accessions` routed 'now' or 'digest', the filings a digest can list, marked or not."""
+    return {
+        acc for acc in accessions
+        if conn.execute(
+            "SELECT 1 FROM briefs WHERE accession_no = ? AND route IN ('now', 'digest')", (acc,)
+        ).fetchone()
+    }
+
+
 def mark_digested(conn: sqlite3.Connection, accessions: Iterable[str], at_iso: str) -> int:
     """Record that these filings went out in a digest, so later digests leave them out.
     Filings already marked keep their first time. Returns how many were marked.
