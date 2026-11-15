@@ -44,6 +44,11 @@ filings it routed `now`. Do not re-score or second-guess the routing.
 5. Send the brief to the user on Telegram, with the filing link on its own line.
 6. Save it: `tape brief <accession_no> --text "<the brief>"`. Only save after it is sent, so
    a failed send is retried next run.
+   If it exits 1 with "already has a brief", the brief was saved on an earlier attempt: don't send
+   it again and don't use `--replace`; move on to the next filing. If it says the filing is
+   routed digest or log, you have the wrong accession number: check it against `pending` and
+   report the error line rather than saving the brief elsewhere. Use `--replace` only when the
+   user asks you to correct a brief already sent.
 
 ## Evening digest
 
