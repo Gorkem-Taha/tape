@@ -73,9 +73,20 @@ def test_format_digest_empty():
     assert "nothing material" in format_digest([])
 
 
-def _digest_row(n, materiality=3.5):
+def _digest_row(n, materiality=3.5, route="digest", briefed=False):
     return {"ticker": f"T{n}", "company": f"Company {n}", "materiality": materiality, "event": "guidance",
-            "direction": "good", "url": f"https://example.com/{n}"}
+            "direction": "good", "url": f"https://example.com/{n}", "route": route, "briefed": briefed}
+
+
+def test_format_digest_marks_only_filings_that_already_had_a_brief():
+    rows = [_digest_row(1, 4.5, route="now", briefed=True), _digest_row(2, 4.0, route="now"),
+            _digest_row(3, 3.0)]
+    lines = format_digest(rows).splitlines()[1:]
+    assert lines == [
+        "[briefed] 4.5  T1  guidance (good)  https://example.com/1",
+        "4.0  T2  guidance (good)  https://example.com/2",
+        "3.0  T3  guidance (good)  https://example.com/3",
+    ]
 
 
 def test_format_digest_header_counts_one_filing_in_the_singular():
@@ -1042,6 +1053,26 @@ def test_digest_json_lists_the_text_digests_filings_in_the_same_order(tmp_path, 
     assert main(["digest"]) == 0
     lines = capsys.readouterr().out.splitlines()[1:]
     assert [line.split()[-1] for line in lines] == [r["url"] for r in rows]
+
+
+def test_digest_marks_filings_already_briefed_in_text_and_json(tmp_path, monkeypatch, capsys):
+    path = tmp_path / "t.db"
+    monkeypatch.setenv("TAPE_DB_PATH", str(path))
+    briefed = _route(path, 1, 4.6, route="now")
+    over_cap = _route(path, 2, 4.4, route="now")
+    digest_only = _route(path, 3, 3.2)
+    assert main(["brief", briefed, "--text", "Guidance raised."]) == 0
+    capsys.readouterr()
+
+    assert main(["digest", "--json"]) == 0
+    rows = {r["accession_no"]: r for r in json.loads(capsys.readouterr().out)}
+    assert rows[briefed]["briefed"] is True and rows[briefed]["route"] == "now"
+    assert rows[over_cap]["briefed"] is False and rows[over_cap]["route"] == "now"
+    assert rows[digest_only]["briefed"] is False and rows[digest_only]["route"] == "digest"
+
+    assert main(["digest"]) == 0
+    lines = capsys.readouterr().out.splitlines()[1:]
+    assert [line.startswith("[briefed] ") for line in lines] == [True, False, False]
 
 
 def test_digest_json_prints_an_empty_list_and_marks_nothing(tmp_path, monkeypatch, capsys):

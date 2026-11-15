@@ -146,9 +146,13 @@ def cmd_brief(args, settings, conn) -> int:
     return 0
 
 
+BRIEFED_MARKER = "[briefed] "
+
+
 def format_digest(rows, hours: int | None = None) -> str:
     """The digest text. `hours` is named in the header when the digest was run with a non-default
     lookback (catching up after an outage), so the message says it covers more than the usual day.
+    Filings that already had a brief sent are marked `[briefed]`, so the unmarked lines are the new ones.
     """
     title = "Tape digest" if hours is None else f"Tape digest (last {hours}h)"
     if not rows:
@@ -157,7 +161,8 @@ def format_digest(rows, hours: int | None = None) -> str:
     lines = [f"{title}: {n} {'filing' if n == 1 else 'filings'} worth a look"]
     for r in rows:
         name = r["ticker"] or r["company"]
-        lines.append(f"{r['materiality']:.1f}  {name}  {r['event']} ({r['direction']})  {r['url']}")
+        marker = BRIEFED_MARKER if r["briefed"] else ""
+        lines.append(f"{marker}{r['materiality']:.1f}  {name}  {r['event']} ({r['direction']})  {r['url']}")
     return "\n".join(lines)
 
 
@@ -180,7 +185,7 @@ def cmd_digest(args, settings, conn) -> int:
     if args.json:
         # For the agent, which formats and sends the digest itself and then needs the accession
         # numbers of exactly what it sent to mark them.
-        text = json.dumps([dict(r) for r in rows], indent=2)
+        text = json.dumps([{**dict(r), "briefed": bool(r["briefed"])} for r in rows], indent=2)
     else:
         text = format_digest(rows, None if args.hours == DIGEST_LOOKBACK_HOURS else args.hours)
     # Print first so the digest reaches the job log even when delivery fails.

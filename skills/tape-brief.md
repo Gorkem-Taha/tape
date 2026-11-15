@@ -53,7 +53,8 @@ At the 6:00 pm ET run, also send the evening digest:
    If the list is empty, send one line: "Tape digest: nothing material today."
 2. Otherwise send them as one Telegram message: a header line "Tape digest: N filings worth a
    look", then one line per filing in the order given: materiality to one decimal, ticker (or
-   company), event, direction in parentheses, and the `url`.
+   company), event, direction in parentheses, and the `url`. Start the line with "[briefed] " when
+   the filing's `briefed` is true, since its brief already went out; leave the others unmarked.
 3. Only after the message is sent, run `tape digest --mark <accession_no> ...` with the
    accession numbers of the filings you sent, so tomorrow's digest doesn't repeat them. If the send
    fails, don't mark anything: the next digest lists them again. If `--mark` exits 1, it names the
