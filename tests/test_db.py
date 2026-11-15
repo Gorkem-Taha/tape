@@ -149,6 +149,55 @@ def test_save_brief_requires_route(conn):
         db.save_brief(conn, make_filing().accession_no, "x", None)
 
 
+def _now_routed(conn, route="now"):
+    f = make_filing()
+    db.upsert_filing(conn, f)
+    db.upsert_score(conn, make_score(f.accession_no, 4.6))
+    db.set_route(conn, f.accession_no, route)
+    return f.accession_no
+
+
+def _brief(conn, acc):
+    return tuple(conn.execute("SELECT brief_text, sent_at FROM briefs WHERE accession_no = ?", (acc,)).fetchone())
+
+
+def test_save_brief_refuses_a_second_brief_and_keeps_the_first(conn):
+    acc = _now_routed(conn)
+    db.save_brief(conn, acc, "Agreed to be acquired.", "2026-10-13T20:10:00Z")
+    with pytest.raises(db.AlreadyBriefed):
+        db.save_brief(conn, acc, "Rewritten on a retry.", "2026-10-13T20:40:00Z")
+    assert _brief(conn, acc) == ("Agreed to be acquired.", "2026-10-13T20:10:00Z")
+
+
+def test_save_brief_replace_changes_the_text_but_not_when_it_was_sent(conn):
+    acc = _now_routed(conn)
+    db.save_brief(conn, acc, "Agreed to be acquird.", "2026-10-13T20:10:00Z")
+    db.save_brief(conn, acc, "Agreed to be acquired.", "2026-10-13T20:40:00Z", replace=True)
+    assert _brief(conn, acc) == ("Agreed to be acquired.", "2026-10-13T20:10:00Z")
+
+
+def test_save_brief_replace_on_an_unbriefed_filing_saves_normally(conn):
+    acc = _now_routed(conn)
+    db.save_brief(conn, acc, "Raised guidance.", "2026-10-13T20:10:00Z", replace=True)
+    assert _brief(conn, acc) == ("Raised guidance.", "2026-10-13T20:10:00Z")
+
+
+def test_save_brief_treats_a_whitespace_brief_as_none(conn):
+    acc = _now_routed(conn)
+    conn.execute("UPDATE briefs SET brief_text = ' \n' WHERE accession_no = ?", (acc,))
+    db.save_brief(conn, acc, "Raised guidance.", "2026-10-13T20:10:00Z")
+    assert _brief(conn, acc) == ("Raised guidance.", "2026-10-13T20:10:00Z")
+
+
+@pytest.mark.parametrize("route", ["digest", "log"])
+def test_save_brief_refuses_filings_not_routed_now(conn, route):
+    acc = _now_routed(conn, route)
+    for replace in (False, True):
+        with pytest.raises(db.NotRoutedNow):
+            db.save_brief(conn, acc, "Wrong filing.", "2026-10-13T20:10:00Z", replace=replace)
+    assert _brief(conn, acc) == (None, None)
+
+
 def test_route_constraint(conn):
     db.upsert_filing(conn, make_filing())
     with pytest.raises(sqlite3.IntegrityError):

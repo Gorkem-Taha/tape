@@ -319,15 +319,52 @@ def set_route(conn: sqlite3.Connection, accession_no: str, route: str) -> None:
     )
 
 
-def save_brief(conn: sqlite3.Connection, accession_no: str, text: str, sent_at: str | None) -> None:
+class BriefRefused(Exception):
+    """`save_brief` would not save: the filing exists and is routed, but not as one to brief now."""
+
+
+class AlreadyBriefed(BriefRefused):
+    """The filing already has a brief; saving again would replace what was sent and when."""
+
+
+class NotRoutedNow(BriefRefused):
+    """The filing is routed 'digest' or 'log', so it is never briefed on its own."""
+
+
+# The blank test pending_briefs and digest_since use: a whitespace-only brief, saved before briefs were
+# checked, counts as none.
+_HAS_BRIEF = "trim(COALESCE(brief_text, ''), ' ' || char(9, 10, 13)) <> ''"
+
+
+def save_brief(conn: sqlite3.Connection, accession_no: str, text: str, sent_at: str | None,
+               replace: bool = False) -> None:
+    """Save the brief sent for a filing routed 'now'.
+
+    A filing that already has a brief raises AlreadyBriefed, so a retried agent step or a mistyped
+    accession number can't silently rewrite what the user received. `replace=True` is for a deliberate
+    correction: it changes the text and keeps the first `sent_at`. A filing routed 'digest' or 'log'
+    raises NotRoutedNow; one never routed raises KeyError.
+    """
     if not text.strip():
         raise ValueError(f"empty brief for {accession_no}")
-    updated = conn.execute(
-        "UPDATE briefs SET brief_text = ?, sent_at = ? WHERE accession_no = ?",
-        (text, sent_at, accession_no),
-    ).rowcount
-    if not updated:
+    row = conn.execute(
+        f"SELECT route, {_HAS_BRIEF} AS briefed FROM briefs WHERE accession_no = ?", (accession_no,)
+    ).fetchone()
+    if row is None:
         raise KeyError(f"no routed filing {accession_no}")
+    if row["route"] != "now":
+        raise NotRoutedNow(f"{accession_no} is routed {row['route']}, not now")
+    if row["briefed"]:
+        if not replace:
+            raise AlreadyBriefed(f"{accession_no} already has a brief")
+        conn.execute(
+            "UPDATE briefs SET brief_text = ?, sent_at = COALESCE(sent_at, ?) WHERE accession_no = ?",
+            (text, sent_at, accession_no),
+        )
+        return
+    conn.execute(
+        "UPDATE briefs SET brief_text = ?, sent_at = ? WHERE accession_no = ?", (text, sent_at, accession_no)
+    )
 
 
 def one_line(text: str) -> str:
