@@ -486,6 +486,62 @@ def test_brief_unknown_accession_is_one_line_error(tmp_path, monkeypatch, capsys
     assert [p["accession_no"] for p in json.loads(capsys.readouterr().out)] == [acc]
 
 
+def _brief_row(path, acc):
+    with closing(db.connect(path)) as conn:
+        return dict(conn.execute("SELECT brief_text, sent_at FROM briefs WHERE accession_no = ?", (acc,)).fetchone())
+
+
+def test_brief_twice_is_refused_and_keeps_the_first(tmp_path, monkeypatch, capsys):
+    path = tmp_path / "t.db"
+    monkeypatch.setenv("TAPE_DB_PATH", str(path))
+    acc = _seed(path)
+    assert main(["brief", acc, "--text", "Example Corp agreed to be acquired."]) == 0
+    first = _brief_row(path, acc)
+    capsys.readouterr()
+
+    assert main(["brief", acc, "--text", "Example Corp raised guidance."]) == 1
+    captured = capsys.readouterr()
+    assert captured.err.strip() == (
+        f"error: {acc} already has a brief; nothing saved (use --replace to correct it)"
+    )
+    assert captured.out == ""
+    assert _brief_row(path, acc) == first
+
+
+def test_brief_replace_changes_text_and_keeps_sent_at(tmp_path, monkeypatch, capsys):
+    path = tmp_path / "t.db"
+    monkeypatch.setenv("TAPE_DB_PATH", str(path))
+    acc = _seed(path)
+    assert main(["brief", acc, "--text", "Example Corp agreed to be acquired."]) == 0
+    with closing(db.connect(path)) as conn:
+        conn.execute("UPDATE briefs SET sent_at = '2026-01-02T15:00:00Z' WHERE accession_no = ?", (acc,))
+        conn.commit()
+    capsys.readouterr()
+
+    assert main(["brief", acc, "--replace", "--text", "Example Corp agreed to be acquired for $12 a share."]) == 0
+    assert capsys.readouterr().out.strip() == f"replaced brief for {acc}"
+    assert _brief_row(path, acc) == {
+        "brief_text": "Example Corp agreed to be acquired for $12 a share.",
+        "sent_at": "2026-01-02T15:00:00Z",
+    }
+
+
+@pytest.mark.parametrize("route", ["digest", "log"])
+def test_brief_for_filing_not_routed_now_is_refused(tmp_path, monkeypatch, capsys, route):
+    path = tmp_path / "t.db"
+    monkeypatch.setenv("TAPE_DB_PATH", str(path))
+    acc = _seed(path)
+    with closing(db.connect(path)) as conn:
+        db.set_route(conn, acc, route)
+        conn.commit()
+
+    assert main(["brief", acc, "--text", "Example Corp raised guidance."]) == 1
+    captured = capsys.readouterr()
+    assert captured.err.strip() == f"error: {acc} is routed {route}, not now; nothing saved"
+    assert "Traceback" not in captured.err
+    assert _brief_row(path, acc)["brief_text"] is None
+
+
 def test_evaluate_with_too_few_outcomes_exits_cleanly(tmp_path, monkeypatch, capsys):
     path = tmp_path / "t.db"
     monkeypatch.setenv("TAPE_DB_PATH", str(path))
