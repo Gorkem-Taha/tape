@@ -7,6 +7,7 @@ import json
 import logging
 import sys
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from tape import db
 from tape.config import ConfigError, Settings, require_contact
@@ -147,13 +148,26 @@ def cmd_brief(args, settings, conn) -> int:
 
 
 BRIEFED_MARKER = "[briefed] "
+ET = ZoneInfo("America/New_York")
 
 
-def format_digest(rows, hours: int | None = None) -> str:
+def _accepted_label(accepted_at: str, today) -> str:
+    """'Fri Nov 13 ' for a filing EDGAR accepted before `today` (an ET date), '' for one accepted today.
+    Compared in ET, the market's day, so an 8 pm ET filing (already the next day in UTC) is still dated
+    the day it came out.
+    """
+    day = datetime.fromisoformat(accepted_at).astimezone(ET).date()
+    return "" if day >= today else f"{day:%a %b} {day.day}  "
+
+
+def format_digest(rows, hours: int | None = None, now: datetime | None = None) -> str:
     """The digest text. `hours` is named in the header when the digest was run with a non-default
     lookback (catching up after an outage), so the message says it covers more than the usual day.
     Filings that already had a brief sent are marked `[briefed]`, so the unmarked lines are the new ones.
+    Filings accepted before the current ET day carry their acceptance date, so a Monday or catch-up
+    digest shows which lines are old news; the usual same-day lines read as before.
     """
+    today = (now or datetime.now(UTC)).astimezone(ET).date()
     title = "Tape digest" if hours is None else f"Tape digest (last {hours}h)"
     if not rows:
         return f"{title}: nothing material today." if hours is None else f"{title}: nothing material."
@@ -162,7 +176,8 @@ def format_digest(rows, hours: int | None = None) -> str:
     for r in rows:
         name = r["ticker"] or r["company"]
         marker = BRIEFED_MARKER if r["briefed"] else ""
-        lines.append(f"{marker}{r['materiality']:.1f}  {name}  {r['event']} ({r['direction']})  {r['url']}")
+        when = _accepted_label(r["accepted_at"], today)
+        lines.append(f"{marker}{r['materiality']:.1f}  {name}  {r['event']} ({r['direction']})  {when}{r['url']}")
     return "\n".join(lines)
 
 
@@ -187,7 +202,7 @@ def cmd_digest(args, settings, conn) -> int:
         # numbers of exactly what it sent to mark them.
         text = json.dumps([{**dict(r), "briefed": bool(r["briefed"])} for r in rows], indent=2)
     else:
-        text = format_digest(rows, None if args.hours == DIGEST_LOOKBACK_HOURS else args.hours)
+        text = format_digest(rows, None if args.hours == DIGEST_LOOKBACK_HOURS else args.hours, now)
     # Print first so the digest reaches the job log even when delivery fails.
     print(text)
     if args.send:

@@ -55,6 +55,9 @@ At the 6:00 pm ET run, also send the evening digest:
    look", then one line per filing in the order given: materiality to one decimal, ticker (or
    company), event, direction in parentheses, and the `url`. Start the line with "[briefed] " when
    the filing's `briefed` is true, since its brief already went out; leave the others unmarked.
+   When a filing's `accepted_at`, converted to ET, falls on an earlier day than today in ET, put
+   its date (e.g. "Fri Nov 13") just before the `url`, so older filings stand out; leave today's
+   lines undated.
 3. Only after the message is sent, run `tape digest --mark <accession_no> ...` with the
    accession numbers of the filings you sent, so tomorrow's digest doesn't repeat them. If the send
    fails, don't mark anything: the next digest lists them again. If `--mark` exits 1, it names the
