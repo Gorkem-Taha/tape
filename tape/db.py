@@ -531,10 +531,15 @@ def digest_since(conn: sqlite3.Connection, since_iso: str) -> list[sqlite3.Row]:
     flooding the digest with old filings. Jev's scores are often round numbers, so ties are broken newest
     first (compared as instants, since acceptance times carry their own offsets) and then by accession
     number, which keeps the order stable.
+
+    Each row also has its `route` and `briefed`, 1 when a brief was already sent for the filing (the same
+    blank test as `pending_briefs`), so the digest can tell those apart from filings it is the first to
+    report: 'digest' routes and 'now' routes left over the per-run brief cap.
     """
     return conn.execute(
         """
-        SELECT f.accession_no, f.ticker, f.company, f.url, s.materiality, s.event, s.direction
+        SELECT f.accession_no, f.ticker, f.company, f.url, s.materiality, s.event, s.direction, b.route,
+               trim(COALESCE(b.brief_text, ''), ' ' || char(9, 10, 13)) <> '' AS briefed
         FROM briefs b JOIN filings f USING (accession_no) JOIN scores s USING (accession_no)
         WHERE b.route IN ('now', 'digest') AND b.digested_at IS NULL
           AND julianday(f.accepted_at) >= julianday(?)

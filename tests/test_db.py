@@ -194,6 +194,18 @@ def _routed(conn, n, accepted_at, route="digest", materiality=3.0):
     return f.accession_no
 
 
+def test_digest_rows_carry_route_and_whether_a_brief_was_sent(conn):
+    briefed = _routed(conn, 1, "2026-11-12T10:00:00-05:00", route="now", materiality=4.5)
+    blank = _routed(conn, 2, "2026-11-12T11:00:00-05:00", route="now", materiality=4.2)
+    digest = _routed(conn, 3, "2026-11-12T12:00:00-05:00")
+    db.save_brief(conn, briefed, "Raised full-year guidance.", "2026-11-12T15:05:00Z")
+    # A whitespace-only brief, saved before briefs were checked, counts as none, as in pending_briefs.
+    conn.execute("UPDATE briefs SET brief_text = ' \n' WHERE accession_no = ?", (blank,))
+
+    rows = {r["accession_no"]: (r["route"], r["briefed"]) for r in db.digest_since(conn, "2026-11-10T00:00:00Z")}
+    assert rows == {briefed: ("now", 1), blank: ("now", 0), digest: ("digest", 0)}
+
+
 def test_digest_leaves_out_filings_an_earlier_digest_reported(conn):
     reported = _routed(conn, 1, "2026-11-12T15:00:00-05:00")
     late = _routed(conn, 2, "2026-11-12T17:00:00-05:00", route="now")
