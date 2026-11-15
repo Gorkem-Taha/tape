@@ -138,12 +138,20 @@ def cmd_brief(args, settings, conn) -> int:
     sent_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     try:
         with db.transaction(conn):
-            db.save_brief(conn, args.accession_no, text, sent_at)
+            db.save_brief(conn, args.accession_no, text, sent_at, replace=args.replace)
     except KeyError:
         # A mistyped accession number, or one never routed: the agent reads stderr, so one line, no traceback.
         print(f"error: no routed filing {args.accession_no}; nothing saved", file=sys.stderr)
         return 1
-    print(f"saved brief for {args.accession_no}")
+    except db.AlreadyBriefed:
+        # Usually a retried run step: the brief already went out, so the stored one is the true record.
+        print(f"error: {args.accession_no} already has a brief; nothing saved (use --replace to correct it)",
+              file=sys.stderr)
+        return 1
+    except db.NotRoutedNow as e:
+        print(f"error: {e}; nothing saved", file=sys.stderr)
+        return 1
+    print(f"{'replaced' if args.replace else 'saved'} brief for {args.accession_no}")
     return 0
 
 
@@ -369,6 +377,8 @@ def build_parser() -> argparse.ArgumentParser:
     br = sub.add_parser("brief", help="save a brief written by the agent")
     br.add_argument("accession_no")
     br.add_argument("--text", help="brief text; read from stdin if omitted")
+    br.add_argument("--replace", action="store_true",
+                    help="correct a brief already saved; keeps the time the first one was sent")
     br.set_defaults(fn=cmd_brief)
     d = sub.add_parser("digest", help="print the digest of recent material filings")
     d.add_argument("--hours", type=_positive_int, default=DIGEST_LOOKBACK_HOURS,
