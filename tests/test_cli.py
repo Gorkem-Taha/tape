@@ -3,6 +3,7 @@ import logging
 import sys
 from contextlib import closing
 from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import httpx
 import pandas as pd
@@ -73,15 +74,20 @@ def test_format_digest_empty():
     assert "nothing material" in format_digest([])
 
 
-def _digest_row(n, materiality=3.5, route="digest", briefed=False):
+# Friday Nov 13 2026, 6 pm ET.
+DIGEST_NOW = datetime(2026, 11, 13, 23, 0, tzinfo=UTC)
+
+
+def _digest_row(n, materiality=3.5, route="digest", briefed=False, accepted_at="2026-11-13T09:30:00-05:00"):
     return {"ticker": f"T{n}", "company": f"Company {n}", "materiality": materiality, "event": "guidance",
-            "direction": "good", "url": f"https://example.com/{n}", "route": route, "briefed": briefed}
+            "direction": "good", "url": f"https://example.com/{n}", "route": route, "briefed": briefed,
+            "accepted_at": accepted_at}
 
 
 def test_format_digest_marks_only_filings_that_already_had_a_brief():
     rows = [_digest_row(1, 4.5, route="now", briefed=True), _digest_row(2, 4.0, route="now"),
             _digest_row(3, 3.0)]
-    lines = format_digest(rows).splitlines()[1:]
+    lines = format_digest(rows, now=DIGEST_NOW).splitlines()[1:]
     assert lines == [
         "[briefed] 4.5  T1  guidance (good)  https://example.com/1",
         "4.0  T2  guidance (good)  https://example.com/2",
@@ -90,18 +96,67 @@ def test_format_digest_marks_only_filings_that_already_had_a_brief():
 
 
 def test_format_digest_header_counts_one_filing_in_the_singular():
-    assert format_digest([_digest_row(1)]).splitlines()[0] == "Tape digest: 1 filing worth a look"
+    assert format_digest([_digest_row(1)], now=DIGEST_NOW).splitlines()[0] == "Tape digest: 1 filing worth a look"
 
 
 def test_format_digest_header_counts_several_filings_in_the_plural():
     rows = [_digest_row(1), _digest_row(2)]
-    assert format_digest(rows).splitlines()[0] == "Tape digest: 2 filings worth a look"
+    assert format_digest(rows, now=DIGEST_NOW).splitlines()[0] == "Tape digest: 2 filings worth a look"
 
 
 def test_format_digest_header_names_a_non_default_window():
     rows = [_digest_row(1), _digest_row(2), _digest_row(3)]
-    assert format_digest(rows, hours=72).splitlines()[0] == "Tape digest (last 72h): 3 filings worth a look"
+    header = format_digest(rows, hours=72, now=DIGEST_NOW).splitlines()[0]
+    assert header == "Tape digest (last 72h): 3 filings worth a look"
     assert format_digest([], hours=72) == "Tape digest (last 72h): nothing material."
+
+
+def test_format_digest_leaves_todays_filings_undated():
+    rows = [_digest_row(1, accepted_at="2026-11-13T00:05:00-05:00"),
+            _digest_row(2, accepted_at="2026-11-13T17:40:00-05:00")]
+    assert format_digest(rows, now=DIGEST_NOW).splitlines()[1:] == [
+        "3.5  T1  guidance (good)  https://example.com/1",
+        "3.5  T2  guidance (good)  https://example.com/2",
+    ]
+
+
+def test_format_digest_dates_filings_accepted_before_today_in_et():
+    monday = datetime(2026, 11, 16, 22, 0, tzinfo=UTC)
+    rows = [_digest_row(1, 4.5, accepted_at="2026-11-16T08:00:00-05:00"),
+            _digest_row(2, 4.0, route="now", briefed=True, accepted_at="2026-11-13T16:05:00-05:00"),
+            _digest_row(3, 3.0, accepted_at="2026-11-12T11:00:00-05:00")]
+    assert format_digest(rows, now=monday).splitlines()[1:] == [
+        "4.5  T1  guidance (good)  https://example.com/1",
+        "[briefed] 4.0  T2  guidance (good)  Fri Nov 13  https://example.com/2",
+        "3.0  T3  guidance (good)  Thu Nov 12  https://example.com/3",
+    ]
+
+
+def test_format_digest_dates_by_the_et_day_not_the_utc_day():
+    # 9:30 pm ET Thursday is already Friday in UTC: dated Thursday on Friday's digest...
+    late = _digest_row(1, accepted_at="2026-11-13T02:30:00+00:00")
+    assert format_digest([late], now=DIGEST_NOW).splitlines()[1] == (
+        "3.5  T1  guidance (good)  Thu Nov 12  https://example.com/1")
+    # ...and undated on a digest run later that same Thursday evening ET, though UTC has moved on.
+    thursday_night = datetime(2026, 11, 13, 4, 0, tzinfo=UTC)
+    assert format_digest([late], now=thursday_night).splitlines()[1] == (
+        "3.5  T1  guidance (good)  https://example.com/1")
+
+
+def test_digest_dates_an_older_filing_but_not_a_fresh_one(tmp_path, monkeypatch, capsys):
+    path = tmp_path / "t.db"
+    monkeypatch.setenv("TAPE_DB_PATH", str(path))
+    fresh = _route(path, 1, 4.0, hours_ago=0)
+    old = _route(path, 2, 3.5, hours_ago=72)
+
+    assert main(["digest"]) == 0
+    lines = capsys.readouterr().out.splitlines()[1:]
+    with closing(db.connect(path)) as conn:
+        accepted = {acc: conn.execute("SELECT accepted_at FROM filings WHERE accession_no = ?", (acc,)).fetchone()[0]
+                    for acc in (fresh, old)}
+    old_day = datetime.fromisoformat(accepted[old]).astimezone(ZoneInfo("America/New_York")).date()
+    assert f"{old_day:%a %b} {old_day.day}" in lines[1]
+    assert len(lines[0].split("  ")) == 4  # score, ticker, event, url: no date on today's filing
 
 
 def test_digest_names_the_window_only_when_hours_is_given(tmp_path, monkeypatch, capsys):
@@ -1048,7 +1103,7 @@ def test_digest_json_lists_the_text_digests_filings_in_the_same_order(tmp_path, 
     rows = json.loads(capsys.readouterr().out)
     assert [r["accession_no"] for r in rows] == [high, low, tie_older]
     assert rows[0]["materiality"] == 4.2 and rows[0]["event"] == "mna"
-    assert {"ticker", "company", "url", "direction"} <= rows[0].keys()
+    assert {"ticker", "company", "url", "direction", "accepted_at"} <= rows[0].keys()
 
     assert main(["digest"]) == 0
     lines = capsys.readouterr().out.splitlines()[1:]

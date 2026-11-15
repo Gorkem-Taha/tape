@@ -206,6 +206,13 @@ def test_digest_rows_carry_route_and_whether_a_brief_was_sent(conn):
     assert rows == {briefed: ("now", 1), blank: ("now", 0), digest: ("digest", 0)}
 
 
+def test_digest_rows_carry_the_acceptance_time_as_edgar_reported_it(conn):
+    acc = _routed(conn, 1, "2026-11-12T21:30:00-05:00")
+    (row,) = db.digest_since(conn, "2026-11-10T00:00:00Z")
+    assert row["accession_no"] == acc
+    assert row["accepted_at"] == "2026-11-12T21:30:00-05:00"
+
+
 def test_digest_leaves_out_filings_an_earlier_digest_reported(conn):
     reported = _routed(conn, 1, "2026-11-12T15:00:00-05:00")
     late = _routed(conn, 2, "2026-11-12T17:00:00-05:00", route="now")
