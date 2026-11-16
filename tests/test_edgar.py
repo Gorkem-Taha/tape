@@ -47,6 +47,45 @@ def test_parse_index_page():
     assert page.items == ["5.02", "9.01"]
     assert page.main_url == f"{FOLDER}/exmp-20261013.htm"
     assert page.exhibit_url == f"{FOLDER}/ex991.htm"
+    assert page.exhibit_type == "EX-99.1"
+
+
+EX991_ROW = ('<tr><td>2</td><td>PRESS RELEASE</td><td><a href="/Archives/edgar/data/1/000000000126000101/ex991.htm">'
+             "ex991.htm</a></td><td>EX-99.1</td><td>12000</td></tr>")
+
+
+def _doc_row(name, doc_type):
+    return (f'<tr><td>3</td><td>EXHIBIT</td><td><a href="/Archives/edgar/data/1/000000000126000101/{name}">'
+            f"{name}</a></td><td>{doc_type}</td><td>9000</td></tr>")
+
+
+def _index_with_exhibits(*rows):
+    html = (FIX / "index.htm").read_text()
+    assert EX991_ROW in html
+    return html.replace(EX991_ROW, "".join(rows))
+
+
+def test_parse_index_page_prefers_the_press_release_wherever_it_is_listed():
+    html = _index_with_exhibits(_doc_row("ex992.htm", "EX-99.2"), EX991_ROW)
+    page = parse_index_page(html, INDEX)
+    assert (page.exhibit_type, page.exhibit_url) == ("EX-99.1", f"{FOLDER}/ex991.htm")
+
+
+@pytest.mark.parametrize("doc_type", ["EX-99.2", "EX-99", "ex-99.3"])
+def test_parse_index_page_falls_back_to_the_first_other_ex99(doc_type):
+    html = _index_with_exhibits(_doc_row("deck.htm", doc_type), _doc_row("later.htm", "EX-99.4"))
+    page = parse_index_page(html, INDEX)
+    assert (page.exhibit_type, page.exhibit_url) == (doc_type.upper(), f"{FOLDER}/deck.htm")
+
+
+def test_parse_index_page_accepts_a_padded_press_release_type():
+    html = _index_with_exhibits(_doc_row("deck.htm", "EX-99.2"), _doc_row("pr.htm", "EX-99.01"))
+    assert parse_index_page(html, INDEX).exhibit_type == "EX-99.01"
+
+
+def test_parse_index_page_without_an_exhibit():
+    page = parse_index_page(_index_with_exhibits(), INDEX)
+    assert (page.exhibit_type, page.exhibit_url) == (None, None)
 
 
 MAINTENANCE_PAGE = "<html><body><h1>EDGAR is undergoing maintenance</h1><p>Please try again later.</p></body></html>"
