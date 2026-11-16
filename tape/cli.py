@@ -258,7 +258,7 @@ def _mark_digested(conn, accessions: list[str], now: datetime) -> int:
 def cmd_stats(args, settings, conn) -> int:
     from tape.stats import collect, format_stats
 
-    print(format_stats(collect(conn, args.days)))
+    print(format_stats(collect(conn, args.days, digest_window_hours=DIGEST_LOOKBACK_HOURS)))
     return 0
 
 

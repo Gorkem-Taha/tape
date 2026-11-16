@@ -588,6 +588,24 @@ def digest_since(conn: sqlite3.Connection, since_iso: str) -> list[sqlite3.Row]:
     ).fetchall()
 
 
+def undigested_counts(conn: sqlite3.Connection, since_iso: str) -> tuple[int, int]:
+    """Filings routed 'now' or 'digest' that no digest has reported yet, as (inside, outside): those EDGAR
+    accepted at or after `since_iso`, which `digest_since` with the same bound still lists, and older ones
+    a digest over that window will never report. Same joins as `digest_since`, so the first count matches
+    what the next digest would list.
+    """
+    row = conn.execute(
+        """
+        SELECT COALESCE(SUM(julianday(f.accepted_at) >= julianday(?)), 0) AS inside,
+               COALESCE(SUM(julianday(f.accepted_at) < julianday(?)), 0) AS outside
+        FROM briefs b JOIN filings f USING (accession_no) JOIN scores s USING (accession_no)
+        WHERE b.route IN ('now', 'digest') AND b.digested_at IS NULL
+        """,
+        (since_iso, since_iso),
+    ).fetchone()
+    return int(row["inside"]), int(row["outside"])
+
+
 def digest_routed(conn: sqlite3.Connection, accessions: Iterable[str]) -> set[str]:
     """Those of `accessions` routed 'now' or 'digest', the filings a digest can list, marked or not."""
     return {

@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
@@ -184,3 +184,59 @@ def test_format_stats_omits_missing_index_line_when_none_were_missing(conn):
 def test_format_stats_omits_feed_gap_line_without_gaps(conn):
     db.finish_run(conn, db.start_run(conn, "pass", started_at="2026-10-16T14:00:00Z"))
     assert "Feed may have" not in format_stats(collect(conn, days=1, today=date(2026, 10, 16)))
+
+
+NOW = datetime(2026, 10, 16, 20, 0, tzinfo=UTC)
+
+
+def _routed(conn, n, accepted_at, route="digest", digested_at=None):
+    _add(conn, n, accepted_at, score=3.5, route=route)
+    if digested_at:
+        db.mark_digested(conn, [make_filing(n).accession_no], digested_at)
+        conn.commit()
+
+
+def test_no_undigested_line_when_every_routed_filing_was_reported(conn):
+    _routed(conn, 1, "2026-10-16T09:30:00-04:00", digested_at="2026-10-16T22:00:00Z")
+    _add(conn, 2, "2026-10-16T10:00:00-04:00", score=2.0, route="log")  # log routes are never digested
+
+    s = collect(conn, days=1, today=TODAY, digest_window_hours=120, now=NOW)
+
+    assert (s.undigested, s.undigested_expired) == (0, 0)
+    assert "digest" not in format_stats(s).splitlines()[-1]
+
+
+def test_counts_undigested_filings_inside_the_digest_window(conn):
+    _routed(conn, 1, "2026-10-16T09:30:00-04:00", route="now")
+    _routed(conn, 2, "2026-10-12T09:30:00-04:00")  # 4 days back: still inside 120h
+
+    s = collect(conn, days=1, today=TODAY, digest_window_hours=120, now=NOW)
+
+    assert (s.undigested, s.undigested_expired) == (2, 0)
+    assert format_stats(s).splitlines()[-1] == "2 routed filing(s) not yet in a digest"
+
+
+def test_reports_undigested_filings_past_the_digest_window(conn):
+    _routed(conn, 1, "2026-10-16T09:30:00-04:00")
+    _routed(conn, 2, "2026-10-09T09:30:00-04:00")  # a week back: the digest will never list it
+    _routed(conn, 3, "2026-10-01T09:30:00-04:00", route="now")
+    _routed(conn, 4, "2026-10-01T10:00:00-04:00", digested_at="2026-10-01T22:00:00Z")
+
+    s = collect(conn, days=1, today=TODAY, digest_window_hours=120, now=NOW)
+
+    assert (s.undigested, s.undigested_expired) == (1, 2)
+    assert format_stats(s).splitlines()[-1] == (
+        "3 routed filing(s) not yet in a digest; 2 older than the 120h digest window will not be reported "
+        "(tape digest --hours N catches up)"
+    )
+    # The inside count is exactly what the next digest lists.
+    cutoff = (NOW - timedelta(hours=120)).isoformat()
+    assert len(db.digest_since(conn, cutoff)) == s.undigested
+
+
+def test_undigested_counts_are_skipped_without_a_digest_window(conn):
+    _routed(conn, 1, "2026-10-01T09:30:00-04:00")
+
+    s = collect(conn, days=1, today=TODAY)
+
+    assert (s.undigested, s.undigested_expired) == (0, 0)

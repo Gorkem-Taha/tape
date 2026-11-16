@@ -55,14 +55,25 @@ class Stats:
     missing_index_days: int = 0
     # Of those, how many EDGAR failed to serve filings to; a later pass or backfill fetches them.
     outage_runs: int = 0
+    # Routed filings no digest has reported: those the default digest window still covers, and those it
+    # has aged past, which the scheduled digest will never report. Counted only when collect() is given
+    # the window, and like given_up, across all days rather than the stats window.
+    digest_window_hours: int | None = None
+    undigested: int = 0
+    undigested_expired: int = 0
 
 
-def collect(conn: sqlite3.Connection, days: int = 7, today: date | None = None) -> Stats:
+def collect(conn: sqlite3.Connection, days: int = 7, today: date | None = None, *,
+            digest_window_hours: int | None = None, now: datetime | None = None) -> Stats:
     """Filings, scores and routes for the last `days` days (today included), bucketed by EDGAR's
     acceptance date in Eastern time so a filing lands on the day the market saw it.
 
     Backfills score old filings, so spend per filing day understates what was paid this week; the
     window total is taken from scored_at instead.
+
+    With `digest_window_hours`, also counts routed filings no digest has reported, split at that many
+    hours before `now` (the digest's lookback), so a delivery outage that outlasts it doesn't drop
+    filings silently.
     """
     if days < 1:
         raise ValueError("days must be at least 1")
@@ -93,10 +104,15 @@ def collect(conn: sqlite3.Connection, days: int = 7, today: date | None = None) 
     window = (start_utc.isoformat(), end_utc.isoformat())
     spend = conn.execute(SPEND_SQL, window).fetchone()
     runs = conn.execute(RUNS_SQL, window).fetchone()
+    undigested = expired = 0
+    if digest_window_hours is not None:
+        cutoff = (now or datetime.now(UTC)) - timedelta(hours=digest_window_hours)
+        undigested, expired = db.undigested_counts(conn, cutoff.isoformat())
     return Stats(days=[buckets[k] for k in sorted(buckets)], spend_usd=float(spend["cost"]), calls=int(spend["n"]),
                  given_up=len(db.given_up(conn)), fetch_given_up=len(db.fetch_given_up(conn)),
                  runs=int(runs["n"]), blocked_runs=int(runs["blocked"]), feed_gap_runs=int(runs["feed_gaps"]),
-                 missing_index_days=int(runs["missing_days"]), outage_runs=int(runs["outages"]))
+                 missing_index_days=int(runs["missing_days"]), outage_runs=int(runs["outages"]),
+                 digest_window_hours=digest_window_hours, undigested=undigested, undigested_expired=expired)
 
 
 def format_stats(s: Stats) -> str:
@@ -140,4 +156,10 @@ def format_stats(s: Stats) -> str:
             f"Gave up fetching {s.fetch_given_up:,} filing(s) after {db.MAX_FETCH_ATTEMPTS} failed attempts "
             "(tape retry lists them; tape retry --fetch retries them)"
         )
+    if s.undigested or s.undigested_expired:
+        line = f"{s.undigested + s.undigested_expired:,} routed filing(s) not yet in a digest"
+        if s.undigested_expired:
+            line += (f"; {s.undigested_expired:,} older than the {s.digest_window_hours}h digest window will not "
+                     "be reported (tape digest --hours N catches up)")
+        lines.append(line)
     return "\n".join(lines)

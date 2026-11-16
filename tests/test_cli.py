@@ -181,7 +181,9 @@ def test_stats_command(tmp_path, monkeypatch, capsys):
     assert main(["stats", "--days", "3"]) == 0
     lines = capsys.readouterr().out.splitlines()
     assert lines[0].split()[:3] == ["day", "filings", "scored"]
-    assert len(lines) == 1 + 3 + 2  # header, one row per day, total, spend
+    assert len(lines) == 1 + 3 + 3  # header, one row per day, total, spend, undigested
+    # The seeded 'now' filing hasn't gone out in a digest yet; stats uses the digest's own lookback.
+    assert lines[-1] == "1 routed filing(s) not yet in a digest"
 
 
 def test_stats_rejects_zero_days(tmp_path, monkeypatch, capsys):
@@ -251,7 +253,7 @@ def test_other_value_errors_are_not_mistaken_for_configuration(tmp_path, monkeyp
     _config_env(tmp_path, monkeypatch)
     assert main(["init"]) == 0
 
-    def broken(*_args):
+    def broken(*_args, **_kwargs):
         raise ValueError("a bug")
 
     monkeypatch.setattr("tape.stats.collect", broken)
