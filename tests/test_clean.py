@@ -227,3 +227,11 @@ def test_zero_width_characters_inside_a_word_are_removed():
 def test_unicode_spaces_collapse_to_one_space():
     html = "<p>Net\u2002sales\u2009rose\u202f12%\u3000in\u00a0\u2003Q3.</p>"
     assert html_to_text(html) == "Net sales rose 12% in Q3."
+
+
+def test_zero_width_and_unicode_spaced_cells_flatten_like_plain_ones():
+    html = (
+        "<table><tr><td>Net sales</td><td>&#8203;</td><td>$</td>"
+        "<td>&#8203;412.5</td><td>&#xFEFF;</td><td> %</td></tr></table>"
+    )
+    assert html_to_text(html) == "Net sales | $412.5%"

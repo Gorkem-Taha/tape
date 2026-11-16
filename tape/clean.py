@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
-from bs4 import BeautifulSoup, NavigableString
+from bs4 import BeautifulSoup, NavigableString, Tag
 
 # Spaces, tabs and the Unicode space separators (NBSP, en/em/thin/hair spaces, narrow NBSP,
 # ideographic space) all collapse to one ASCII space.
@@ -85,7 +85,12 @@ def _flatten_table_rows(soup: BeautifulSoup) -> None:
         if not cells or any(cell.find(_BLOCK_TAGS) is not None for cell in cells):
             continue
         row.clear()
-        row.append(_join_cells(" ".join(cell.get_text().split()) for cell in cells))
+        row.append(_join_cells(_cell_text(cell) for cell in cells))
+
+
+def _cell_text(cell: Tag) -> str:
+    # A cell holding only a zero-width space is a spacer, like an empty one.
+    return " ".join(_ZERO_WIDTH.sub("", cell.get_text()).split())
 
 
 def _join_cells(texts: Iterable[str]) -> str:
