@@ -38,8 +38,8 @@ Everything runs inside one Agent37 workspace. Plain Python does the repeatable w
 
 | Component | Module | Job | Runs as |
 | --- | --- | --- | --- |
-| Ingester | `tape/edgar.py` | Polls EDGAR's latest-filings Atom feed for 8-Ks, then pulls each filing's main document and press release exhibit (EX-99.1) | Agent37 scheduled job, every 5 minutes in market hours |
-| Cleaner | `tape/clean.py` | Strips HTML, keeps the item headings and the first part of EX-99.1, trims to Jev's input budget | Same job, after ingest |
+| Ingester | `tape/edgar.py` | Polls EDGAR's latest-filings Atom feed for 8-Ks, then pulls each filing's main document and press release exhibit (EX-99.1, or the first other EX-99 when there is none) | Agent37 scheduled job, every 5 minutes in market hours |
+| Cleaner | `tape/clean.py` | Strips HTML, keeps the item headings and the first part of the exhibit, labeled with its type, trims to Jev's input budget | Same job, after ingest |
 | Scorer | `tape/score.py` | Sends each cleaned filing to Jev with the question set below; stores every answer and its cost | Same job, after clean |
 | Router | `tape/route.py` | Applies thresholds: brief now, add to the evening digest, or log only | Same job, after score |
 | Briefer | `skills/tape-brief.md` | Reads the full filing for routed items and writes a three-line brief | The Agent37 agent itself |

@@ -146,6 +146,18 @@ def test_end_to_end_fetch_sends_user_agent():
     assert all(c.request.headers["User-Agent"] == "Tape test test@example.com" for c in respx.calls)
 
 
+@respx.mock
+def test_fetch_labels_the_exhibit_it_used():
+    respx.get(INDEX).respond(200, text=_index_with_exhibits(_doc_row("deck.htm", "EX-99.2")))
+    respx.get(f"{FOLDER}/exmp-20261013.htm").respond(200, text=(FIX / "main_8k.htm").read_text())
+    respx.get(f"{FOLDER}/deck.htm").respond(200, text="<html><body><p>Investor day slides.</p></body></html>")
+    respx.get(TICKERS_URL).respond(200, text=(FIX / "company_tickers.json").read_text())
+    ref = FilingRef("0000000001-26-000101", "0000000001", "Example Corp", "8-K", INDEX)
+    text = Edgar("Tape test test@example.com", per_second=1000).fetch(ref, max_chars=100_000).clean_text
+    assert "EXHIBIT 99.2\nInvestor day slides." in text
+    assert "press release" not in text
+
+
 def _index_without_documents():
     """The fixture index page with its document table emptied."""
     html = (FIX / "index.htm").read_text()

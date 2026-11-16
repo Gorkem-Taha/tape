@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from tape.clean import build_state_text, drop_boilerplate, html_to_text, items_in
+from tape.clean import build_state_text, drop_boilerplate, exhibit_label, html_to_text, items_in
 
 FIX = Path(__file__).parent / "fixtures"
 
@@ -84,6 +84,24 @@ def test_state_text_includes_exhibit_and_respects_budget():
     short = build_state_text(main, ex, max_chars=300)
     assert len(short) <= 300
     assert short.startswith("UNITED STATES")
+
+
+@pytest.mark.parametrize(("exhibit_type", "label"), [
+    (None, "EXHIBIT 99.1 (press release)"),
+    ("EX-99.1", "EXHIBIT 99.1 (press release)"),
+    ("EX-99.01", "EXHIBIT 99.1 (press release)"),
+    ("EX-99.2", "EXHIBIT 99.2"),
+    ("EX-99", "EXHIBIT 99"),
+    (" ex-99.3 ", "EXHIBIT 99.3"),
+])
+def test_exhibit_label_names_the_document_type(exhibit_type, label):
+    assert exhibit_label(exhibit_type) == label
+
+
+def test_state_text_labels_a_non_press_release_exhibit_by_its_type():
+    text = build_state_text(_page("Item 7.01 Regulation FD."), _page("Investor presentation."), 1000, "EX-99.2")
+    assert text == "Item 7.01 Regulation FD.\n\nEXHIBIT 99.2\nInvestor presentation."
+    assert "press release" not in text
 
 
 def test_empty_exhibit_adds_no_label():

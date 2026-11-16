@@ -243,7 +243,7 @@ class Edgar:
         index = parse_index_page(self.get(ref.index_url).text, ref.index_url)
         main_html = self.get(index.main_url).text if index.main_url else ""
         exhibit_html = self.get(index.exhibit_url).text if index.exhibit_url else None
-        text = build_state_text(main_html, exhibit_html, max_chars)
+        text = build_state_text(main_html, exhibit_html, max_chars, index.exhibit_type)
         if not text.strip():
             # Nothing to score: no 8-K or EX-99 document on the index page, or only images. Raise so
             # the filing isn't stored and a later pass can try again.
