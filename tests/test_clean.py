@@ -213,3 +213,17 @@ def test_plain_text_filing_keeps_its_lines():
 
 def test_html_comments_do_not_leak_into_text():
     assert html_to_text("<p>Kept<!-- a\nnote --> text.</p>") == "Kept text."
+
+
+def test_zero_width_spacer_paragraphs_are_dropped():
+    html = "<div><p>Revenue rose.</p><p>&#8203;</p><p>&#xFEFF;</p><p>Costs fell.</p></div>"
+    assert html_to_text(html) == "Revenue rose.\nCosts fell."
+
+
+def test_zero_width_characters_inside_a_word_are_removed():
+    assert html_to_text("<p>Net\u200b sales\u2060 rose.</p>") == "Net sales rose."
+
+
+def test_unicode_spaces_collapse_to_one_space():
+    html = "<p>Net\u2002sales\u2009rose\u202f12%\u3000in\u00a0\u2003Q3.</p>"
+    assert html_to_text(html) == "Net sales rose 12% in Q3."
