@@ -5,9 +5,14 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
-from bs4 import BeautifulSoup, NavigableString
+from bs4 import BeautifulSoup, NavigableString, Tag
 
-_WS = re.compile(r"[ \t ]+")
+# Spaces, tabs and the Unicode space separators (NBSP, en/em/thin/hair spaces, narrow NBSP,
+# ideographic space) all collapse to one ASCII space.
+_WS = re.compile(r"[ \t\u00a0\u2000-\u200a\u202f\u205f\u3000]+")
+# Zero-width characters (spaces, joiners, word joiner, BOM) carry no text. Spacer paragraphs in
+# Workiva filings hold nothing but one, and str.strip() doesn't treat them as blank.
+_ZERO_WIDTH = re.compile(r"[\u200b-\u200d\u2060\ufeff]")
 _BLANKS = re.compile(r"\n{3,}")
 # 8-K item headings, e.g. "Item 5.02 Departure of Directors or Certain Officers".
 _ITEM = re.compile(r"^\s*item\s+(\d\.\d{2})\b", re.IGNORECASE | re.MULTILINE)
@@ -63,7 +68,7 @@ def html_to_text(html: str) -> str:
             tag.insert_after("\n")
     for br in soup.find_all("br"):
         br.replace_with("\n")
-    text = soup.get_text()
+    text = _ZERO_WIDTH.sub("", soup.get_text())
     lines = [_WS.sub(" ", line).strip() for line in text.splitlines()]
     text = "\n".join(line for line in lines if line)
     return _BLANKS.sub("\n\n", text).strip()
@@ -80,7 +85,12 @@ def _flatten_table_rows(soup: BeautifulSoup) -> None:
         if not cells or any(cell.find(_BLOCK_TAGS) is not None for cell in cells):
             continue
         row.clear()
-        row.append(_join_cells(" ".join(cell.get_text().split()) for cell in cells))
+        row.append(_join_cells(_cell_text(cell) for cell in cells))
+
+
+def _cell_text(cell: Tag) -> str:
+    # A cell holding only a zero-width space is a spacer, like an empty one.
+    return " ".join(_ZERO_WIDTH.sub("", cell.get_text()).split())
 
 
 def _join_cells(texts: Iterable[str]) -> str:
