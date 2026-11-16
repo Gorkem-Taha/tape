@@ -125,13 +125,28 @@ def items_in(text: str) -> list[str]:
     return seen
 
 
-def build_state_text(main_html: str, exhibit_html: str | None, max_chars: int) -> str:
-    """The 8-K body first (it says what happened), then the press release (it says how much)."""
+def exhibit_label(exhibit_type: str | None) -> str:
+    """The heading for the exhibit in the state text, named after its document type (EX-99.2 ->
+    EXHIBIT 99.2). Only EX-99.1 is called a press release: Jev reads the label, and calling an
+    investor deck or a shareholder letter a press release suggests a results announcement.
+    """
+    kind = (exhibit_type or "EX-99.1").strip().upper()
+    number = kind.removeprefix("EX-")
+    if number in ("99.1", "99.01"):
+        return "EXHIBIT 99.1 (press release)"
+    return f"EXHIBIT {number}"
+
+
+def build_state_text(main_html: str, exhibit_html: str | None, max_chars: int,
+                     exhibit_type: str | None = None) -> str:
+    """The 8-K body first (it says what happened), then the exhibit, usually the press release (it
+    says how much). `exhibit_type` is the exhibit's document type from the index; None means EX-99.1.
+    """
     main = drop_boilerplate(html_to_text(main_html))
     parts = [main]
     exhibit = drop_boilerplate(html_to_text(exhibit_html)) if exhibit_html else ""
     if exhibit:  # a label with nothing under it would make an empty filing look non-empty
-        parts.append("EXHIBIT 99.1 (press release)\n" + exhibit)
+        parts.append(exhibit_label(exhibit_type) + "\n" + exhibit)
     text = "\n\n".join(parts)
     if len(text) <= max_chars:
         return text

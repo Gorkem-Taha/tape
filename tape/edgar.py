@@ -243,7 +243,7 @@ class Edgar:
         index = parse_index_page(self.get(ref.index_url).text, ref.index_url)
         main_html = self.get(index.main_url).text if index.main_url else ""
         exhibit_html = self.get(index.exhibit_url).text if index.exhibit_url else None
-        text = build_state_text(main_html, exhibit_html, max_chars)
+        text = build_state_text(main_html, exhibit_html, max_chars, index.exhibit_type)
         if not text.strip():
             # Nothing to score: no 8-K or EX-99 document on the index page, or only images. Raise so
             # the filing isn't stored and a later pass can try again.
@@ -392,12 +392,19 @@ def _dedupe(refs: list[FilingRef]) -> list[FilingRef]:
     return out
 
 
+# Document types EDGAR filers use for the press release exhibit. Most write EX-99.1; a few pad it.
+PRESS_RELEASE_TYPES = frozenset({"EX-99.1", "EX-99.01"})
+
+
 @dataclass(frozen=True)
 class IndexPage:
     accepted_at: str
     items: list[str]
     main_url: str | None
     exhibit_url: str | None
+    # The exhibit's document type as the index lists it (EX-99.1, EX-99.2, EX-99), so the state
+    # text can say which exhibit it is rather than assume a press release.
+    exhibit_type: str | None = None
 
 
 def parse_index_page(html: str, base_url: str) -> IndexPage:
@@ -418,7 +425,8 @@ def parse_index_page(html: str, base_url: str) -> IndexPage:
         raise IndexPageError(f"{base_url} has an unreadable Accepted time: {info['Accepted']!r}") from None
     items = _ITEM.findall(info.get("Items", ""))
 
-    main_url = exhibit_url = None
+    main_url = None
+    exhibits: list[tuple[str, str]] = []  # (type, url) of each EX-99* in index order
     for row in soup.select("table.tableFile tr"):
         cells = row.find_all("td")
         if len(cells) < 4:
@@ -432,6 +440,10 @@ def parse_index_page(html: str, base_url: str) -> IndexPage:
         url = urljoin(base_url, href)
         if doc_type == "8-K" and main_url is None:
             main_url = url
-        elif doc_type.startswith("EX-99") and exhibit_url is None:
-            exhibit_url = url
-    return IndexPage(accepted.isoformat(), items, main_url, exhibit_url)
+        elif doc_type.startswith("EX-99"):
+            exhibits.append((doc_type, url))
+    # The press release when there is one, wherever the index lists it; otherwise the first EX-99
+    # (an investor presentation, a shareholder letter) is still the best text we have.
+    exhibit = next((e for e in exhibits if e[0] in PRESS_RELEASE_TYPES), exhibits[0] if exhibits else None)
+    exhibit_type, exhibit_url = exhibit if exhibit else (None, None)
+    return IndexPage(accepted.isoformat(), items, main_url, exhibit_url, exhibit_type)
