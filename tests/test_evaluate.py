@@ -269,3 +269,27 @@ def test_evaluate_does_not_depend_on_row_order_when_scores_tie():
     shuffled = df.sample(frac=1, random_state=3)
     assert evaluate(shuffled).to_json() == evaluate(df).to_json()
     assert evaluate(df.iloc[::-1]).to_json() == evaluate(df).to_json()
+
+
+def test_cost_per_filing_averages_only_known_costs():
+    df = _frame(signal=1.0, n=200)
+    df["cost_usd"] = 0.0002
+    df.loc[df.index[:50], "cost_usd"] = np.nan
+    r = evaluate(df)
+    assert r.cost_per_filing_usd == pytest.approx(0.0002)
+    assert r.cost_unknown == 50
+    assert "$0.000200 (cost unknown for 50 of 200)" in format_report(r)
+
+
+def test_cost_per_filing_with_every_cost_known_says_nothing_extra():
+    r = evaluate(_frame(signal=1.0, n=200))
+    assert r.cost_unknown == 0
+    assert "Jev cost per filing: $0.000100, median" in format_report(r)
+
+
+def test_cost_per_filing_is_unknown_when_no_score_has_a_cost():
+    df = _frame(signal=1.0, n=200)
+    df["cost_usd"] = np.nan
+    r = evaluate(df)
+    assert np.isnan(r.cost_per_filing_usd) and r.cost_unknown == 200
+    assert "Jev cost per filing: unknown, median" in format_report(r)

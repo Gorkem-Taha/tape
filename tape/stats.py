@@ -15,7 +15,8 @@ ROUTES = ("now", "digest", "log")
 # Window spend. The WHERE clause must keep the exact julianday(scored_at) expression so SQLite can seek on
 # idx_scores_scored_jd; tests check the plan.
 SPEND_SQL = """
-SELECT COUNT(*) AS n, COALESCE(SUM(cost_usd), 0) AS cost FROM scores
+SELECT COUNT(*) AS n, COALESCE(SUM(cost_usd), 0) AS cost, COALESCE(SUM(cost_usd IS NULL), 0) AS unknown
+FROM scores
 WHERE julianday(scored_at) >= julianday(?) AND julianday(scored_at) < julianday(?)
 """
 
@@ -41,6 +42,8 @@ class Stats:
     days: list[DayStats]
     spend_usd: float  # Jev cost of every score made in the window, whatever day the filing is from
     calls: int
+    # Of those calls, how many Jev returned no token usage for; their cost is unknown and not in spend_usd.
+    cost_unknown: int = 0
     # Filings scoring gave up on (any day, not just the window): they need a look, and stay unscored
     # until `tape retry --score` clears them.
     given_up: int = 0
@@ -109,6 +112,7 @@ def collect(conn: sqlite3.Connection, days: int = 7, today: date | None = None, 
         cutoff = (now or datetime.now(UTC)) - timedelta(hours=digest_window_hours)
         undigested, expired = db.undigested_counts(conn, cutoff.isoformat())
     return Stats(days=[buckets[k] for k in sorted(buckets)], spend_usd=float(spend["cost"]), calls=int(spend["n"]),
+                 cost_unknown=int(spend["unknown"]),
                  given_up=len(db.given_up(conn)), fetch_given_up=len(db.fetch_given_up(conn)),
                  runs=int(runs["n"]), blocked_runs=int(runs["blocked"]), feed_gap_runs=int(runs["feed_gaps"]),
                  missing_index_days=int(runs["missing_days"]), outage_runs=int(runs["outages"]),
@@ -131,7 +135,10 @@ def format_stats(s: Stats) -> str:
         f"{'total':<10}  {total_filings:>7,}  {total_scored:>6,}  {totals['now']:>4,}  "
         f"{totals['digest']:>6,}  {totals['log']:>5,}"
     )
-    lines.append(f"Jev spend in window: ${s.spend_usd:.2f} over {s.calls:,} calls")
+    spend = f"Jev spend in window: ${s.spend_usd:.2f} over {s.calls:,} calls"
+    if s.cost_unknown:
+        spend += f" (cost unknown for {s.cost_unknown:,} score(s))"
+    lines.append(spend)
     if s.blocked_runs:
         lines.append(f"EDGAR rate-limited {s.blocked_runs:,} of {s.runs:,} runs in window")
     if s.outage_runs:

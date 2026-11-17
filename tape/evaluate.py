@@ -188,8 +188,10 @@ class Report:
     rule_lift: float
     jev_lift_same_budget: float
     by_event: dict[str, dict[str, float]]
-    cost_per_filing_usd: float
+    cost_per_filing_usd: float  # over filings whose score has a known cost; NaN if none does
     median_latency_ms: float
+    # Scores stored without a cost because Jev returned no token usage; left out of cost_per_filing_usd.
+    cost_unknown: int = 0
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), indent=2)
@@ -302,8 +304,10 @@ def evaluate(df: pd.DataFrame, shuffles: int = 200, seed: int = 7) -> Report:
         rule_lift=_lift(flag, move),
         jev_lift_same_budget=_lift(jev_flag, move),
         by_event=by_event,
-        cost_per_filing_usd=float(df["cost_usd"].fillna(0).mean()),
+        # An unknown cost is not a zero one: averaging it in as free would pull the per-filing cost down.
+        cost_per_filing_usd=float(df["cost_usd"].mean()) if df["cost_usd"].notna().any() else float("nan"),
         median_latency_ms=float(df["latency_ms"].median()),
+        cost_unknown=int(df["cost_usd"].isna().sum()),
     )
 
 
@@ -320,6 +324,15 @@ def format_report(r: Report) -> str:
         f"Top-10 daily picks moving > {BIG_MOVE:.0%}: {r.hit_rate_top10_daily:.0%}",
         f"Item-code rule flags {r.rule_flagged}: lift {r.rule_lift:.2f}x; Jev top {r.rule_flagged}: "
         f"lift {r.jev_lift_same_budget:.2f}x",
-        f"Jev cost per filing: ${r.cost_per_filing_usd:.6f}, median latency {r.median_latency_ms:.0f} ms",
+        f"Jev cost per filing: {_cost_text(r)}, median latency {r.median_latency_ms:.0f} ms",
     ]
     return "\n".join(lines)
+
+
+def _cost_text(r: Report) -> str:
+    if r.cost_unknown >= r.n:
+        return "unknown"
+    text = f"${r.cost_per_filing_usd:.6f}"
+    if r.cost_unknown:
+        text += f" (cost unknown for {r.cost_unknown:,} of {r.n:,})"
+    return text
