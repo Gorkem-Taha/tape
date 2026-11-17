@@ -1,3 +1,4 @@
+import json
 from datetime import date, datetime
 
 import numpy as np
@@ -293,3 +294,45 @@ def test_cost_per_filing_is_unknown_when_no_score_has_a_cost():
     r = evaluate(df)
     assert np.isnan(r.cost_per_filing_usd) and r.cost_unknown == 200
     assert "Jev cost per filing: unknown, median" in format_report(r)
+
+
+def _strict_loads(text: str) -> dict:
+    def reject(token):
+        raise ValueError(f"non-JSON constant {token}")
+    return json.loads(text, parse_constant=reject)
+
+
+def test_report_json_writes_undefined_metrics_as_null():
+    df = _frame(signal=1.0, n=200)
+    df["items"] = "8.01"  # no rule items anywhere, so both lifts are undefined
+    df.loc[df["event"] == "mna", "materiality"] = 3.0  # constant scores: that event's spearman is undefined
+    r = evaluate(df)
+    assert r.rule_flagged == 0 and np.isnan(r.rule_lift) and np.isnan(r.jev_lift_same_budget)
+
+    data = _strict_loads(r.to_json())
+
+    assert data["rule_lift"] is None and data["jev_lift_same_budget"] is None
+    assert data["by_event"]["mna"]["spearman"] is None
+    assert data["gap_ratio"] == pytest.approx(r.gap_ratio)  # defined metrics are unchanged
+
+
+def test_report_json_with_unknown_cost_is_strict_json():
+    df = _frame(signal=1.0, n=200)
+    df["cost_usd"] = np.nan
+    assert _strict_loads(evaluate(df).to_json())["cost_per_filing_usd"] is None
+
+
+def test_format_report_says_na_for_undefined_metrics():
+    df = _frame(signal=1.0, n=200)
+    df["items"] = "8.01"
+    text = format_report(evaluate(df))
+    assert "Item-code rule flags 0: lift n/a; Jev top 0: lift n/a" in text
+    assert "nan" not in text
+
+
+def test_format_report_says_na_when_scores_all_tie():
+    df = _frame(signal=1.0, n=200)
+    df["materiality"] = 3.0
+    text = format_report(evaluate(df))
+    assert "Spearman score vs move: n/a" in text
+    assert "nan" not in text
