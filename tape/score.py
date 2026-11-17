@@ -129,7 +129,8 @@ def score_one(client: SystemOneClient, row: Any, model: str, price_per_m: float)
         boilerplate=float(a["boilerplate"].noul),
         raw_json=_raw_json(resp),
         input_tokens=input_tokens,
-        cost_usd=(input_tokens or 0) * price_per_m / 1_000_000,
+        # No usage means we don't know what the call cost; NULL keeps it out of totals instead of reading as free.
+        cost_usd=None if input_tokens is None else input_tokens * price_per_m / 1_000_000,
         latency_ms=round(latency_ms, 1),
         materiality_confidence=_confidence(a["materiality"]),
         event_confidence=_confidence(a["event"]),

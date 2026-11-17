@@ -1,6 +1,7 @@
 import json
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 from typesafe_sdk import (
@@ -72,6 +73,32 @@ def test_score_one_tolerates_answers_without_confidence(conn):
 
     s = score_one(Bare(), _row(conn), "m", 0.042)
     assert s.materiality_confidence is None and s.materiality_probs is None
+
+
+@pytest.mark.parametrize("usage", [None, SimpleNamespace(output_tokens=5)])
+def test_score_one_without_usage_stores_unknown_cost(conn, usage):
+    class NoUsage(FakeJev):
+        def system_one(self, state, questions, *, model=None):
+            resp = super().system_one(state, questions, model=model)
+            resp.usage = usage
+            return resp
+
+    s = score_one(NoUsage(), _row(conn), "m", 0.042)
+    assert s.input_tokens is None and s.cost_usd is None
+    db.upsert_score(conn, s)
+    stored = conn.execute("SELECT input_tokens, cost_usd FROM scores WHERE accession_no = ?",
+                          (s.accession_no,)).fetchone()
+    assert tuple(stored) == (None, None)
+
+
+def test_score_one_with_zero_tokens_costs_zero(conn):
+    class Empty(FakeJev):
+        def system_one(self, state, questions, *, model=None):
+            resp = super().system_one(state, questions, model=model)
+            resp.usage = SimpleNamespace(input_tokens=0)
+            return resp
+
+    assert score_one(Empty(), _row(conn), "m", 0.042).cost_usd == 0.0
 
 
 def test_level_probs_keeps_each_probability_at_its_level():
