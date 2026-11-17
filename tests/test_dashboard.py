@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime
 
 import pytest
@@ -42,6 +43,29 @@ def test_build_shows_gap_interval(conn):
     assert "90% CI 1.90-2.95x, random 1.00x" in html
     html = build(conn, {**REPORT, "gap_ci_low": float("nan"), "gap_ci_high": float("nan")}, NOW)
     assert "90% CI" not in html
+
+
+UNDEFINED = {"rule_flagged": 0, "rule_lift": None, "jev_lift_same_budget": None, "spearman": None,
+             "random_spearman": None, "gap_ci_low": None, "gap_ci_high": None}
+
+
+def test_build_shows_na_for_undefined_metrics(conn):
+    html = build(conn, {**REPORT, **UNDEFINED}, NOW)
+    assert "Item-code rule (0 flags): lift n/a." in html
+    assert "Jev at the same alert volume: lift n/a." in html
+    assert "<b>n/a</b><span class=\"muted\">random n/a</span>" in html  # rank correlation tile
+    assert "90% CI" not in html
+    assert "nan" not in html
+
+
+def test_build_shows_na_for_nan_in_older_reports(conn, tmp_path):
+    # Reports written before undefined metrics became null hold bare NaN tokens, which json.loads accepts.
+    report = tmp_path / "eval.json"
+    report.write_text(json.dumps({**REPORT, "rule_flagged": 0, "rule_lift": float("nan"),
+                                  "jev_lift_same_budget": float("nan"), "spearman": float("nan")}))
+    html = write(conn, tmp_path / "dash.html", report).read_text()
+    assert "Item-code rule (0 flags): lift n/a." in html
+    assert "Rank correlation" in html and "nanx" not in html
 
 
 def test_build_without_report_or_data(conn):

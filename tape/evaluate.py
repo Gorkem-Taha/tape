@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import sqlite3
 from bisect import bisect_left, bisect_right
 from dataclasses import asdict, dataclass
@@ -20,6 +21,7 @@ import numpy as np
 import pandas as pd
 
 from tape.config import ConfigError
+from tape.fmt import fmt_metric
 
 log = logging.getLogger(__name__)
 
@@ -194,7 +196,18 @@ class Report:
     cost_unknown: int = 0
 
     def to_json(self) -> str:
-        return json.dumps(asdict(self), indent=2)
+        # Undefined metrics (no rule flags, all scores tied, ...) are NaN in memory. Bare NaN tokens
+        # aren't JSON and make strict readers reject the whole file, so they go out as null, and
+        # allow_nan=False makes any that slip past fail here instead of in someone else's parser.
+        return json.dumps(_finite_or_none(asdict(self)), indent=2, allow_nan=False)
+
+
+def _finite_or_none(value):
+    if isinstance(value, dict):
+        return {k: _finite_or_none(v) for k, v in value.items()}
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return value
 
 
 def _ranked(score: pd.Series) -> pd.Index:
@@ -318,15 +331,21 @@ def format_report(r: Report) -> str:
         "Mean |abnormal return| by materiality score",
         *(f"  {k}: {v['mean_abs_ar']:.2%}  (n={v['n']})" for k, v in sorted(r.by_score.items())),
         "",
-        f"Top 10% vs bottom 50%:  {r.top10_mean:.2%} vs {r.bottom50_mean:.2%}  = {r.gap_ratio:.2f}x"
-        f"  (90% CI {r.gap_ci_low:.2f}-{r.gap_ci_high:.2f}x; random {r.random_gap_ratio:.2f}x)",
-        f"Spearman score vs move: {r.spearman:.3f}  (random {r.random_spearman:.3f})",
+        f"Top 10% vs bottom 50%:  {r.top10_mean:.2%} vs {r.bottom50_mean:.2%}  = {fmt_metric(r.gap_ratio, '.2f', 'x')}"
+        f"  ({_ci_text(r)}; random {fmt_metric(r.random_gap_ratio, '.2f', 'x')})",
+        f"Spearman score vs move: {fmt_metric(r.spearman, '.3f')}  (random {fmt_metric(r.random_spearman, '.3f')})",
         f"Top-10 daily picks moving > {BIG_MOVE:.0%}: {r.hit_rate_top10_daily:.0%}",
-        f"Item-code rule flags {r.rule_flagged}: lift {r.rule_lift:.2f}x; Jev top {r.rule_flagged}: "
-        f"lift {r.jev_lift_same_budget:.2f}x",
+        f"Item-code rule flags {r.rule_flagged}: lift {fmt_metric(r.rule_lift, '.2f', 'x')}; "
+        f"Jev top {r.rule_flagged}: lift {fmt_metric(r.jev_lift_same_budget, '.2f', 'x')}",
         f"Jev cost per filing: {_cost_text(r)}, median latency {r.median_latency_ms:.0f} ms",
     ]
     return "\n".join(lines)
+
+
+def _ci_text(r: Report) -> str:
+    if not (math.isfinite(r.gap_ci_low) and math.isfinite(r.gap_ci_high)):
+        return "90% CI n/a"
+    return f"90% CI {r.gap_ci_low:.2f}-{r.gap_ci_high:.2f}x"
 
 
 def _cost_text(r: Report) -> str:
