@@ -57,6 +57,20 @@ def test_spend_follows_scored_at_not_filing_day(conn):
     assert s.spend_usd == pytest.approx(0.5)
 
 
+def test_scores_without_a_cost_are_counted_not_summed(conn):
+    _add(conn, 1, "2026-10-16T09:30:00-04:00", score=4.5, cost=0.01)
+    _add(conn, 2, "2026-10-16T10:00:00-04:00", score=2.0, cost=None)
+    _add(conn, 3, "2026-10-16T10:30:00-04:00", score=2.0, cost=None)
+
+    s = collect(conn, days=7, today=TODAY)
+
+    assert (s.calls, s.cost_unknown) == (3, 2)
+    assert s.spend_usd == pytest.approx(0.01)
+    assert format_stats(s).splitlines()[-1] == (
+        "Jev spend in window: $0.01 over 3 calls (cost unknown for 2 score(s))"
+    )
+
+
 def test_rejects_non_positive_window(conn):
     with pytest.raises(ValueError):
         collect(conn, days=0, today=TODAY)
@@ -72,6 +86,7 @@ def test_format_stats(conn):
     assert lines[2].split() == ["2026-10-16", "1", "1", "1", "0", "0", "$0.01"]
     assert lines[3].split() == ["total", "1", "1", "1", "0", "0"]
     assert lines[-1] == "Jev spend in window: $0.01 over 1 calls"
+    assert collect(conn, days=2, today=TODAY).cost_unknown == 0
 
 
 def test_format_stats_totals_each_route_across_days(conn):
