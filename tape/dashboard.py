@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 import sqlite3
 from datetime import UTC, date, datetime, time, timedelta
 from html import escape
@@ -12,6 +11,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from tape.files import write_atomic
+from tape.fmt import fmt_metric
 
 log = logging.getLogger(__name__)
 ET = ZoneInfo("America/New_York")
@@ -206,12 +206,15 @@ def build(conn: sqlite3.Connection, report: dict | None, now: datetime | None = 
     eval_html = ('<p class="muted">No evaluation yet. Run <code>tape backfill</code> '
                  'then <code>tape evaluate</code>.</p>')
     if report:
-        gap_note = f"random {report['random_gap_ratio']:.2f}x"
+        # Undefined metrics are null in the report (NaN in reports written before that) and show as n/a.
+        gap_note = f"random {fmt_metric(report.get('random_gap_ratio'), '.2f', 'x')}"
         low, high = report.get("gap_ci_low"), report.get("gap_ci_high")  # absent in older reports
-        if low is not None and high is not None and math.isfinite(low) and math.isfinite(high):
-            gap_note = f"90% CI {low:.2f}-{high:.2f}x, {gap_note}"
-        tiles.append(_tile("Top 10% / bottom 50%", f"{report['gap_ratio']:.2f}x", gap_note))
-        tiles.append(_tile("Rank correlation", f"{report['spearman']:.2f}", f"random {report['random_spearman']:.2f}"))
+        ci = fmt_metric(low, ".2f"), fmt_metric(high, ".2f")
+        if "n/a" not in ci:
+            gap_note = f"90% CI {ci[0]}-{ci[1]}x, {gap_note}"
+        tiles.append(_tile("Top 10% / bottom 50%", fmt_metric(report.get("gap_ratio"), ".2f", "x"), gap_note))
+        tiles.append(_tile("Rank correlation", fmt_metric(report.get("spearman"), ".2f"),
+                           f"random {fmt_metric(report.get('random_spearman'), '.2f')}"))
         rows = "".join(
             f'<tr><td>{k}</td><td class="num">{v["n"]:,}</td><td class="num">{v["mean_abs_ar"]:.2%}</td></tr>'
             for k, v in sorted(report["by_score"].items())
@@ -223,8 +226,9 @@ def build(conn: sqlite3.Connection, report: dict | None, now: datetime | None = 
             + '<details><summary class="muted">Table view</summary><div class="scroll"><table>'
             '<tr><th>Score</th><th class="num">Filings</th><th class="num">Mean |abnormal return|</th></tr>'
             + rows + "</table></div></details>"
-            + f'<p class="muted">Item-code rule ({report["rule_flagged"]:,} flags): lift {report["rule_lift"]:.2f}x. '
-            f'Jev at the same alert volume: lift {report["jev_lift_same_budget"]:.2f}x.</p>'
+            + f'<p class="muted">Item-code rule ({report["rule_flagged"]:,} flags): '
+            f'lift {fmt_metric(report.get("rule_lift"), ".2f", "x")}. '
+            f'Jev at the same alert volume: lift {fmt_metric(report.get("jev_lift_same_budget"), ".2f", "x")}.</p>'
         )
 
     recent = _recent(conn, since)
